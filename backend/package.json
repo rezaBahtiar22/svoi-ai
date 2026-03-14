@@ -10,7 +10,7 @@
     "typescript": "^5"
   },
   "scripts": {
-    "dev": "bun run index.ts"
+    "dev": "bun run src/index.ts"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.1",
