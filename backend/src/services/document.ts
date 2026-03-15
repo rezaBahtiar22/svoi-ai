@@ -6,7 +6,6 @@ import pdfExtract from 'pdf-parse-fork';
 import { VectorService } from './vector';
 
 export const DocumentService = {
-    // PENYESUAIAN: ChunkSize diperbesar ke 1200 agar paragraf tidak gampang terpotong
     createChunks(text: string, chunkSize: number = 1200, chunkOverlap: number = 300) {
         const chunks = [];
         let i = 0;
@@ -53,7 +52,7 @@ export const DocumentService = {
                 rawText = new TextDecoder().decode(buffer);
             }
 
-            // PENYESUAIAN: Membersihkan teks agar kalimat yang terpisah baris menyambung kembali
+            // Membersihkan teks agar kalimat yang terpisah baris menyambung kembali
             const cleanText = rawText
                 .replace(/(\r\n|\n|\r)/gm, " ") // Ubah enter menjadi spasi
                 .replace(/\s+/g, " ")           // Ubah spasi ganda menjadi spasi tunggal

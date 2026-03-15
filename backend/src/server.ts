@@ -55,7 +55,6 @@ const app = new Elysia()
             if (!question) return { error: "Pertanyaan tidak boleh kosong" };
 
             try {
-                // PENYESUAIAN: Pastikan di vector.ts match_count diatur ke 10 atau 15
                 const searchResult = await VectorService.search(question);
 
                 if ('message' in searchResult) {

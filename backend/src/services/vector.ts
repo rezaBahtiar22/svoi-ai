@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
 // API di Supabase
-// Contoh jika menggunakan Bun
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
