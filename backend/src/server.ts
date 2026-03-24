@@ -51,38 +51,51 @@ const app = new Elysia()
           })
 
           .get("/chat", async ({ query }) => {
-            const question = query.n as string;
+            const question = (query.q || query.n) as string;
             if (!question) return { error: "Pertanyaan tidak boleh kosong" };
 
             try {
+                // 1. Ambil konteks lebih banyak (match_count: 15)
                 const searchResult = await VectorService.search(question);
 
                 if ('message' in searchResult) {
                     return { answer: searchResult.message };
                 }
 
-                const contextText = searchResult.map((r: any) => r.text).join("\n\n---\n\n");
+                const contextText = searchResult.map((r: any) => 
+                    `[Sumber: ${r.metadata.fileName || 'Dokumen'}]\n${r.text}`
+                ).join("\n\n---\n\n");
 
+                // 2. Prompt yang lebih 'galak' dan terstruktur
                 const prompt = `
-                    Anda adalah Svoy-AI, asisten yang sangat teliti.
-                    Jawablah pertanyaan berdasarkan KONTEKS yang diberikan. 
-                    Jika jawaban ada di konteks tetapi kalimatnya tampak terpotong, berikan kesimpulan terbaik dari informasi yang tersedia.
-                    Selalu gunakan Bahasa Indonesia yang baik.
+                    Anda adalah Svoy-AI, pakar analisis dokumen akademik.
+                    Tugas Anda: Jawab pertanyaan user secara akurat hanya berdasarkan KONTEKS yang diberikan.
+                    
+                    ATURAN:
+                    1. Jika jawaban tidak ada dalam konteks, katakan Anda tidak menemukannya di dokumen, jangan mengarang.
+                    2. Jika informasi dalam konteks terpotong, sambungkan dengan logika yang paling masuk akal.
+                    3. Gunakan poin-poin jika menjelaskan langkah teknis atau daftar.
+                    4. Identifikasi istilah teknis (seperti SVM, Hashing, dll) sesuai penjelasan di dokumen.
 
-                    KONTEKS:
+                    KONTEKS DOKUMEN:
                     ${contextText}
 
-                    PERTANYAAN: 
+                    PERTANYAAN USER: 
                     ${question}
                 `;
 
+                // 3. Gunakan model gemini-1.5-flash (lebih stabil)
                 const response = await fetch(
                     `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }]
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: {
+                                temperature: 0.2, // Rendah agar AI tidak kreatif (lebih jujur pada data)
+                                topP: 0.8,
+                            }
                         })
                     }
                 );
