@@ -3,6 +3,7 @@ import { swagger } from "@elysiajs/swagger";
 import { cors } from "@elysiajs/cors";
 import { DocumentService } from "./services/document";
 import { VectorService } from './services/vector';
+import { Stream } from "@elysiajs/stream";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -50,32 +51,38 @@ const app = new Elysia()
             }
           })
 
-          .get("/chat", async ({ query }) => {
+          .get("/chat", ({ query, set }) => {
             const question = (query.q || query.n) as string;
             if (!question) return { error: "Pertanyaan tidak boleh kosong" };
 
-            try {
-                // 1. Ambil konteks lebih banyak (match_count: 15)
+            // Mengatur Header agar browser tidak menganggap ini JSON angka
+            set.headers = {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+            };
+
+            // Menggunakan Async Generator (async function*) untuk streaming teks murni
+            return new Stream(async function* () {
+              try {
                 const searchResult = await VectorService.search(question);
 
                 if ('message' in searchResult) {
-                    return { answer: searchResult.message };
+                  yield searchResult.message;
+                  return;
                 }
 
                 const contextText = searchResult.map((r: any) => 
-                    `[Sumber: ${r.metadata.fileName || 'Dokumen'}]\n${r.text}`
+                  `[Sumber: ${r.metadata?.fileName || 'Dokumen'}]\n${r.text}`
                 ).join("\n\n---\n\n");
 
-                // 2. Prompt yang lebih 'galak' dan terstruktur
                 const prompt = `
                     Anda adalah Svoy-AI, pakar analisis dokumen akademik.
                     Tugas Anda: Jawab pertanyaan user secara akurat hanya berdasarkan KONTEKS yang diberikan.
                     
                     ATURAN:
-                    1. Jika jawaban tidak ada dalam konteks, katakan Anda tidak menemukannya di dokumen, jangan mengarang.
-                    2. Jika informasi dalam konteks terpotong, sambungkan dengan logika yang paling masuk akal.
-                    3. Gunakan poin-poin jika menjelaskan langkah teknis atau daftar.
-                    4. Identifikasi istilah teknis (seperti SVM, Hashing, dll) sesuai penjelasan di dokumen.
+                    1. Jika jawaban tidak ada dalam konteks, katakan Anda tidak menemukannya di dokumen.
+                    2. Gunakan poin-poin jika menjelaskan langkah teknis.
 
                     KONTEKS DOKUMEN:
                     ${contextText}
@@ -84,45 +91,53 @@ const app = new Elysia()
                     ${question}
                 `;
 
-                // 3. Gunakan model gemini-1.5-flash (lebih stabil)
                 const response = await fetch(
-                    `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }],
-                            generationConfig: {
-                                temperature: 0.2, // Rendah agar AI tidak kreatif (lebih jujur pada data)
-                                topP: 0.8,
-                            }
-                        })
-                    }
+                  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      contents: [{ parts: [{ text: prompt }] }],
+                      generationConfig: {
+                        temperature: 0.2,
+                        topP: 0.8,
+                      }
+                    })
+                  }
                 );
 
-                const data: any = await response.json();
+                if (!response.body) throw new Error("Gagal menerima stream dari Google API");
 
-                if (data.error) {
-                    throw new Error(`Google API Error: ${data.error.message}`);
+                const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+                
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+
+                  const lines = value.split("\n");
+                  for (const line of lines) {
+                    if (line.startsWith("data: ")) {
+                      try {
+                        const json = JSON.parse(line.substring(6));
+                        const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+                        if (text) {
+                          // 'yield' akan mengirim teks langsung tanpa dibungkus objek JSON angka
+                          yield text; 
+                        }
+                      } catch (e) {
+                        // Lewati jika JSON tidak lengkap
+                      }
+                    }
+                  }
                 }
-
-                const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf, AI tidak memberikan respon.";
-
-                return {
-                    answer,
-                    sources: [...new Set(searchResult.map((r: any) => r.metadata.fileName))]
-                };
-
-            } catch (error: any) {
-                console.error("❌ Svoy-AI Error:", error.message);
-                return {
-                    error: "Gagal memproses permintaan chat.",
-                    detail: error.message
-                };
-            }
+              } catch (error: any) {
+                console.error("❌ Svoy-AI Stream Error:", error.message);
+                yield `Error: ${error.message}`;
+              }
+            });
           }, {
             detail: {
-              summary: "Ask a question to your documents",
+              summary: "Ask a question to your documents (Streaming)",
               tags: ["Chat"],
             }
           })
@@ -133,5 +148,8 @@ const app = new Elysia()
           })
       )
   )
+  .listen(3000);
+
+console.log(`🦊 Svoy AI is running at ${app.server?.hostname}:${app.server?.port}`);
 
 export default app;
